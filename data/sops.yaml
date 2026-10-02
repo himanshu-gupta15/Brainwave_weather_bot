@@ -1,0 +1,352 @@
+# Weather-advisory Standard Operating Procedures.
+#
+# Why YAML: the policy team can read and edit it without touching Python,
+# it diffs cleanly in review, and every rule is validated against a strict
+# schema on load (unknown metric / activity / group / operator = load error).
+#
+# How a rule is evaluated (see README "SOP matching"):
+#   1. Scope: `applies_to` must match the user's request.
+#        activities: [ids from taxonomy.yaml]  -> user asked about one of these
+#        any_outdoor: true                     -> any outdoor activity, including ones not in the taxonomy
+#        groups: [ids]                         -> AND the user mentioned one of these groups
+#   2. Conditions: `when` is a tree of all / any / not over leaf comparisons
+#        {metric: <name>, gt|gte|lt|lte|eq: <number>}
+#      Metrics are computed from the Open-Meteo hourly forecast for the time
+#      window the user asked about (see README for the full list).
+#      `score.<name>` is a weighted signal count defined under `scores:` below.
+#      If a metric is missing from the API response the leaf is "unknown" and
+#      the rule does not fire (fail closed).
+#   3. Conflicts: highest severity wins, then highest priority, then lowest id.
+#      Other matching rules of severity moderate or above are surfaced as well.
+#
+# Severity ladder: critical > high > moderate > low.
+
+scores:
+  outdoor_leisure_discomfort:
+    description: >
+      Fuzzy "is it a nice day to be outside for a few hours" score. There is no
+      single threshold for a good picnic, so we count weighted signals that
+      make spending hours outdoors unpleasant. 0-1 = favourable, 2 = mixed,
+      3+ = poor. A missing input makes the whole score unknown.
+    signals:
+      - {metric: precip_prob_max_pct, gte: 50, weight: 2, label: rain is likely}
+      - {metric: precip_total_mm, gte: 1, weight: 2, label: measurable rain is forecast}
+      - {metric: thunderstorm_hours, gte: 1, weight: 3, label: thunderstorms are forecast}
+      - {metric: gust_max_kmh, gte: 35, weight: 1, label: gusty wind}
+      - {metric: feels_like_max_c, gte: 35, weight: 1, label: uncomfortably hot}
+      - {metric: feels_like_min_c, lte: 12, weight: 1, label: chilly}
+      - {metric: uv_max, gte: 8, weight: 1, label: very high UV}
+
+sops:
+  # ---------------------------------------------------------------- severe weather
+  - id: SOP-001
+    title: Active heavy-rain system
+    category: severe_weather
+    severity: critical
+    priority: 100
+    applies_to:
+      any_outdoor: true
+    when:
+      any:
+        # IMD classes 64.5 mm in 24 h as "heavy rain".
+        - {metric: precip_next_24h_mm, gte: 64.5}
+        # Prolonged, widespread rain: individual hours look modest but the system is persistent.
+        - all:
+            - {metric: precip_next_24h_mm, gte: 35}
+            - {metric: rain_hours_next_24h, gte: 8}
+        # Rain arriving with squalls.
+        - all:
+            - {metric: precip_next_24h_mm, gte: 20}
+            - {metric: gust_max_kmh, gte: 50}
+        # Persistent system: rain in most hours of the coming day. Added after
+        # replaying Open-Meteo's archived forecast for the IMD-flagged Bhopal
+        # low-pressure event (3-4 Sep 2026): grid totals were only 16-26 mm/24 h,
+        # but 11-15 of the next 24 hours had rain. Persistence was the signal.
+        # Known trade-off: can also fire on steady monsoon-drizzle days.
+        - all:
+            - {metric: rain_hours_next_24h, gte: 12}
+            - {metric: precip_next_24h_mm, gte: 15}
+    advice: >
+      A significant rain system is affecting this location, so we treat every
+      outdoor plan as high risk until it passes. Postpone non-essential outdoor
+      activity and travel. If you must go out, avoid underpasses, low-lying
+      roads and waterlogged areas, never walk or ride through flowing water,
+      and check local weather-department alerts before leaving.
+    rationale: Situational risk from a persistent system exceeds what any single-hour threshold shows.
+
+  - id: SOP-002
+    title: Thunderstorms in the requested window
+    category: severe_weather
+    severity: high
+    priority: 90
+    applies_to:
+      any_outdoor: true
+    when:
+      all:
+        - {metric: thunderstorm_hours, gte: 1}
+    advice: >
+      Thunderstorms are forecast during this window. Plan to be indoors or in
+      a hard-topped vehicle while they pass; open fields, hilltops, water and
+      isolated trees are the most dangerous places to be. Resume outdoor
+      activity only 30 minutes after the last thunder.
+    rationale: Lightning risk is binary from a planning standpoint; any forecast storm hour triggers it.
+
+  # ---------------------------------------------------------------- travel / two-wheelers
+  - id: SOP-003
+    title: Strong wind on two wheels
+    category: travel
+    severity: high
+    priority: 80
+    applies_to:
+      activities: [cycling, two_wheeler]
+    when:
+      any:
+        - {metric: gust_max_kmh, gte: 50}
+        - {metric: wind_max_kmh, gte: 35}
+    advice: >
+      Wind at this level is a safety risk for two-wheelers, not just a comfort
+      issue: gusts can push a rider across a lane or into traffic. Use a car,
+      bus or other enclosed transport if you can. If you must ride, slow down,
+      keep both hands on the handlebars and leave extra space around vehicles.
+    rationale: Crosswind gusts around 50 km/h measurably destabilise bicycles and scooters.
+
+  - id: SOP-004
+    title: Wet roads on two wheels
+    category: travel
+    severity: moderate
+    priority: 60
+    applies_to:
+      activities: [cycling, two_wheeler]
+    when:
+      any:
+        - {metric: precip_total_mm, gte: 2}
+        - {metric: precip_prob_max_pct, gte: 70}
+    advice: >
+      Rain is likely during your ride. Expect slippery roads, longer braking
+      distances and poor visibility. Wear a rain layer and something
+      reflective, brake early, avoid painted road markings and metal covers,
+      and allow extra time.
+    rationale: Braking distance on wet roads roughly doubles; 70% probability is our "plan for it" level.
+
+  - id: SOP-005
+    title: Rain-affected road travel
+    category: travel
+    severity: moderate
+    priority: 55
+    applies_to:
+      activities: [road_travel]
+    when:
+      any:
+        - {metric: precip_prob_max_pct, gte: 70}
+        - {metric: precip_total_mm, gte: 5}
+    advice: >
+      Rain is likely along your travel window, so expect slower traffic and
+      possible waterlogging. Leave earlier than usual, check traffic and
+      local alerts before departing, and avoid routes that are known to flood.
+    rationale: Travel delays, not personal injury, are the main risk at these levels.
+
+  # ---------------------------------------------------------------- outdoor exercise
+  - id: SOP-006
+    title: Dangerous heat for exertion
+    category: outdoor_exercise
+    severity: high
+    priority: 85
+    applies_to:
+      activities: [running, cycling, hiking, outdoor_sports]
+    when:
+      all:
+        - {metric: feels_like_max_c, gte: 40}
+    advice: >
+      The feels-like temperature is in the range where strenuous exercise can
+      cause heat exhaustion or heat stroke. Move the workout indoors or to the
+      cooler early-morning hours. If you go ahead, cut the duration, drink
+      water every 15-20 minutes, and stop immediately if you feel dizzy,
+      nauseous or stop sweating.
+    rationale: Feels-like 40 C+ is where heat illness risk during exertion rises sharply.
+
+  - id: SOP-007
+    title: Warm conditions for exertion
+    category: outdoor_exercise
+    severity: low
+    priority: 40
+    applies_to:
+      activities: [running, cycling, hiking, outdoor_sports, walking]
+    when:
+      all:
+        - {metric: feels_like_max_c, gte: 33}
+        - {metric: feels_like_max_c, lt: 40}
+    advice: >
+      It will feel warm. Exercise is fine for healthy adults with some
+      adjustments: carry water, ease your pace, wear light breathable
+      clothing, and take breaks in the shade.
+    rationale: Warm-but-manageable band below the SOP-006 danger threshold.
+
+  - id: SOP-008
+    title: Very high UV during outdoor activity
+    category: outdoor_exercise
+    severity: moderate
+    priority: 50
+    applies_to:
+      activities: [running, cycling, walking, hiking, outdoor_sports, park_visit, picnic, outdoor_event]
+    when:
+      all:
+        - {metric: uv_max, gte: 8}
+    advice: >
+      UV will be very high. Unprotected skin can burn in under 20 minutes.
+      Use broad-spectrum SPF 30+ sunscreen and reapply every two hours, wear a
+      hat and sunglasses, and prefer early morning or late afternoon for
+      longer sessions.
+    rationale: WHO classes UV index 8+ as "very high".
+
+  - id: SOP-009
+    title: Hiking in wet conditions
+    category: outdoor_exercise
+    severity: high
+    priority: 75
+    applies_to:
+      activities: [hiking]
+    when:
+      any:
+        - {metric: precip_total_mm, gte: 5}
+        - all:
+            - {metric: precip_prob_max_pct, gte: 60}
+            - {metric: rain_hours, gte: 2}
+    advice: >
+      Rain makes trails slippery and can cause sudden stream rises and
+      landslips on slopes. Postpone the hike or choose a short, well-marked,
+      paved route. Do not cross swollen streams, and tell someone your route
+      and expected return time.
+    rationale: Trail injuries and flash-flood exposure rise with sustained rain, not just heavy bursts.
+
+  # ---------------------------------------------------------------- vulnerable groups
+  - id: SOP-010
+    title: Children in heat or strong sun
+    category: vulnerable_groups
+    severity: high
+    priority: 70
+    applies_to:
+      any_outdoor: true
+      groups: [children]
+    when:
+      any:
+        - {metric: uv_max, gte: 6}
+        - {metric: feels_like_max_c, gte: 35}
+    advice: >
+      Children overheat and sunburn faster than adults. Keep outdoor time
+      short and in the shade, dress them in light full-sleeve clothing and a
+      hat, apply child-safe sunscreen, and offer water frequently even if they
+      do not ask. Never leave a child in a parked vehicle.
+    rationale: Lower thresholds than adult SOPs because children thermoregulate less effectively.
+
+  - id: SOP-011
+    title: Older adults in temperature extremes
+    category: vulnerable_groups
+    severity: high
+    priority: 70
+    applies_to:
+      any_outdoor: true
+      groups: [elderly]
+    when:
+      any:
+        - {metric: feels_like_max_c, gte: 35}
+        - {metric: feels_like_min_c, lte: 5}
+    advice: >
+      Older adults are more vulnerable to heat stress and cold. Keep outings
+      short and avoid the hottest or coldest part of the day, make sure they
+      are dressed for the conditions and well hydrated, and keep any regular
+      medication and a phone with them.
+    rationale: Age reduces thirst response and thermoregulation in both directions.
+
+  - id: SOP-012
+    title: Pets and hot surfaces
+    category: vulnerable_groups
+    severity: moderate
+    priority: 50
+    applies_to:
+      any_outdoor: true
+      groups: [pets]
+    when:
+      all:
+        - {metric: temp_max_c, gte: 30}
+    advice: >
+      Pavement and sand can get hot enough to burn paws. Test the ground with
+      the back of your hand for seven seconds; if it is too hot for you, it is
+      too hot for them. Walk pets early or late, stick to grass and shade, and
+      carry water.
+    rationale: Sunlit asphalt runs far hotter than air temperature once air reaches around 30 C.
+
+  # ---------------------------------------------------------------- leisure (fuzzy)
+  - id: SOP-013
+    title: Poor day for outdoor leisure
+    category: leisure
+    severity: moderate
+    priority: 45
+    applies_to:
+      activities: [picnic, outdoor_event, park_visit]
+    when:
+      all:
+        - {metric: score.outdoor_leisure_discomfort, gte: 3}
+    advice: >
+      Several conditions work against spending a few hours outdoors in this
+      window. We recommend moving the plan indoors or to another day. If it
+      must go ahead, arrange covered shelter and keep the outing flexible.
+    rationale: Fuzzy rule; 3+ weighted discomfort signals.
+
+  - id: SOP-014
+    title: Mixed day for outdoor leisure
+    category: leisure
+    severity: low
+    priority: 35
+    applies_to:
+      activities: [picnic, outdoor_event, park_visit]
+    when:
+      all:
+        - {metric: score.outdoor_leisure_discomfort, eq: 2}
+    advice: >
+      Conditions are workable but not ideal. Go ahead if you like, but have a
+      backup: pick a spot near shelter, pack for the specific issue flagged
+      (rain cover, shade or an extra layer), and keep an eye on the sky.
+    rationale: Fuzzy rule; exactly 2 weighted discomfort signals.
+
+  - id: SOP-015
+    title: Favourable day for outdoor leisure
+    category: leisure
+    severity: low
+    priority: 30
+    applies_to:
+      activities: [picnic, outdoor_event, park_visit]
+    when:
+      all:
+        - {metric: score.outdoor_leisure_discomfort, lte: 1}
+    advice: >
+      Conditions look favourable for spending time outdoors. Standard
+      precautions still apply: bring water and sun protection, and check the
+      forecast again shortly before you leave.
+    rationale: Fuzzy rule; at most 1 weighted discomfort signal.
+
+  # ---------------------------------------------------------------- baseline
+  - id: SOP-016
+    title: No weather risk thresholds triggered
+    category: general
+    severity: low
+    priority: 10
+    applies_to:
+      activities: [cycling, two_wheeler, running, walking, hiking, outdoor_sports, road_travel, general_outdoor]
+    when:
+      all:
+        - {metric: feels_like_max_c, lt: 33}
+        - {metric: feels_like_min_c, gt: 5}
+        - {metric: gust_max_kmh, lt: 40}
+        - {metric: wind_max_kmh, lt: 25}
+        - {metric: precip_prob_max_pct, lt: 40}
+        - {metric: precip_total_mm, lt: 1}
+        - {metric: uv_max, lt: 6}
+        - {metric: thunderstorm_hours, eq: 0}
+    advice: >
+      None of our weather risk thresholds are triggered for this window, so
+      there is no weather-related reason to change your plans. Usual
+      precautions still apply.
+    rationale: >
+      Explicit "all clear" band. Conditions between this band and the risk
+      rules (e.g. UV 6-7 with nothing else) deliberately match no SOP, so the
+      bot says it has no guidance rather than implying it is safe.

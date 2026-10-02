@@ -1,0 +1,68 @@
+# Vocabulary the bot understands. SOPs may only reference ids defined here
+# (validated at load time), and the intent extractor may only emit these ids.
+#
+# - `label` is how the bot names the id in replies.
+# - `description` is what the LLM intent extractor sees when mapping a
+#   paraphrased question onto an id ("pedal to the office" -> cycling).
+# - `keywords` are used only by the no-LLM fallback extractor (plain substring
+#   matching on word boundaries). They are deliberately not exhaustive.
+
+activities:
+  cycling:
+    label: cycling
+    description: Riding a bicycle (including e-bikes) for commuting, exercise or leisure. "Bike" on its own means bicycle unless a motor is implied.
+    keywords: [cycle, cycling, bicycle, biking, bike, bike ride, pedal, pedalling, pedaling, e-bike]
+  two_wheeler:
+    label: riding a two-wheeler
+    description: Riding a motorcycle, scooter or other motorised two-wheeler.
+    keywords: [motorcycle, motorbike, scooter, scooty, two-wheeler, two wheeler]
+  running:
+    label: running
+    description: Running or jogging outdoors, including races and training runs.
+    keywords: [run, running, jog, jogging, marathon, 5k, 10k]
+  walking:
+    label: walking
+    description: Walking outdoors for exercise, errands or leisure, including strolls.
+    keywords: [walk, walking, stroll, strolling]
+  hiking:
+    label: hiking
+    description: Hiking or trekking on trails, hills or natural terrain.
+    keywords: [hike, hiking, trek, trekking, trail]
+  outdoor_sports:
+    label: outdoor sports
+    description: Playing a sport outdoors (cricket, football, tennis, etc.) or outdoor gym/exercise sessions.
+    keywords: [cricket, football, soccer, tennis, badminton, basketball, outdoor workout, outdoor sports]
+  picnic:
+    label: a picnic
+    description: A picnic or eating/relaxing outdoors for a few hours.
+    keywords: [picnic]
+  park_visit:
+    label: a park visit
+    description: Visiting a park, playground or garden.
+    keywords: [park, playground, garden]
+  outdoor_event:
+    label: an outdoor event
+    description: Attending or hosting an outdoor gathering such as a wedding, party, concert, fair or festival.
+    keywords: [outdoor event, wedding, concert, festival, fair, outdoor party, barbecue, bbq]
+  road_travel:
+    label: road travel
+    description: Travelling by road (car, bus, cab, auto) including commutes and road trips.
+    keywords: [drive, driving, road trip, commute, commuting, travel, travelling, traveling, journey]
+  general_outdoor:
+    label: going outside
+    description: Going or being outside in general when no more specific activity is named (e.g. "is it ok to go out", "take my dog outside").
+    keywords: [go out, going out, outside, outdoors, step out]
+
+groups:
+  children:
+    label: children
+    description: Babies, toddlers or children accompanying the user.
+    keywords: [kid, kids, child, children, baby, toddler, son, daughter]
+  elderly:
+    label: older adults
+    description: Older adults / senior citizens accompanying the user, or the user being elderly.
+    keywords: [elderly, senior, grandma, grandpa, grandmother, grandfather, old parents, aged]
+  pets:
+    label: pets
+    description: Dogs, cats or other pets accompanying the user.
+    keywords: [dog, dogs, puppy, pet, pets, cat]
