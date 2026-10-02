@@ -2,7 +2,7 @@
 
 A chat bot that answers outdoor-activity safety questions ("is it safe to cycle in Bhopal today?", "should I take my kid to the park?", "good day for a picnic?") using **live Open-Meteo data** and a set of **written Standard Operating Procedures (SOPs)**. The bot never makes up its own safety advice.
 
-Built as one **Next.js 16 + TypeScript** app: a React/Tailwind chat UI, REST route handlers, and a **LangGraph.js** agent with real branching.
+Built as one **Next.js 16 + TypeScript** app: a React chat console (blueprint-style design system), REST route handlers, and a **LangGraph.js** agent with real branching.
 
 The core rule: **deterministic code decides, and the LLM only words the answer.**
 
@@ -92,6 +92,8 @@ Response (trimmed):
 `status` is one of `answered` (grounded in `sop`), `no_guidance` (no policy applies), `data_unavailable` (location or weather failure), or `needs_clarification`. These are more specific than a generic `"success"` so the UI and evals can tell the cases apart. `reason` gives the machine-readable cause.
 
 Other endpoints:
+Streaming: send `Accept: application/x-ndjson` and the same endpoint streams one `{"type":"node","node":"…"}` line per LangGraph node as it completes, then `{"type":"result","response":{…}}`. The UI uses this so its progress strip shows the real path through the graph. Responses also include `hourly`: the raw Open-Meteo values (temperature, feels-like, rain probability and mm) for each hour of the window, which the chart draws.
+
 - `GET /api/health`: mode and SOP count, or the validation error if the YAML is broken.
 - `GET /api/sops`: the live rule set.
 - `GET /api/sessions/{id}/decisions`: per-turn audit log ("why did it say that?").
@@ -105,8 +107,14 @@ app/
   page.tsx                     chat UI entry
   api/chat/route.ts            POST /api/chat (validation, 400/503 handling)
   api/health|sops|sessions/…   health, rule listing, audit trail
-components/Chat.tsx            thread, input, loading/error, auto-scroll, session id
-components/PolicyEvidence.tsx  "Policy used" / "Why it matched" / live weather / trace
+components/console/
+  Console.tsx                  sessions, streaming request, layout (rail / thread / inspector)
+  AnswerCard.tsx               severity, cited SOP, answer, "Why it matched" table, weather tiles
+  HourlyChart.tsx              per-hour rain probability / mm / feels-like for the answer's window
+  Inspector.tsx                location, window, intent, graph path with edge labels, raw JSON
+  LoadingCard.tsx              live graph progress (real node events, not a timer)
+  Rail.tsx, PoliciesDialog.tsx sessions in this tab; live policy library from /api/sops
+lib/ui/view.ts                 pure formatting helpers (severity styles, threshold bars, edge labels)
 lib/
   weather/openMeteo.ts         geocoding + forecast client (injectable fetch)
   sop/metrics.ts               time windows + the ONLY place weather numbers are computed
@@ -377,6 +385,7 @@ E06 depends on the day's weather: it scans 28 cities and reports **INCONCLUSIVE*
 - **Geocoding picks the first result silently** (as the brief suggests). The resolved place is displayed, but the bot doesn't ask "did you mean …".
 - **Memory is per-process `MemorySaver`.** It grows without bound, isn't shared across server instances, and is lost on restart. Fine for this brief; production would use a persistent checkpointer with TTLs.
 - New kinds of weather data need a small code change in `metrics.ts` (see above).
+- **UI on phones:** below 640px the nav links (Policies, Evaluations, API) are hidden and the sessions/policy rail only appears from 1040px, so on a phone you get the chat and the inspector only. The "Evaluations" link opens `evals/RESULTS.md` on GitHub rather than an in-app page.
 
 ## Design decisions
 - **Code decides, the LLM words.** Selecting advice is a lookup over numbers. It must be reproducible, auditable and testable without a model, so it lives in code over data. The LLM is used where language understanding actually helps: mapping messy phrasing onto a fixed vocabulary, and writing a friendly reply. Both uses are bounded by a schema or a guard.

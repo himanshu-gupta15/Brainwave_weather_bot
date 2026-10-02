@@ -41,12 +41,18 @@ export class ChatService {
     this.graph = buildGraph(deps);
   }
 
-  /** One turn. The session id is the LangGraph thread id, so the checkpointer restores earlier turns. */
-  async chat(sessionId: string, message: string): Promise<ChatResponse> {
+  /**
+   * One turn. The session id is the LangGraph thread id, so the checkpointer
+   * restores earlier turns. `onNode` is called as each graph node completes.
+   */
+  async chat(sessionId: string, message: string, onNode?: (node: string) => void): Promise<ChatResponse> {
     const config = { configurable: { thread_id: sessionId } };
     const path: string[] = [];
     for await (const update of await this.graph.stream(turnInput(message), { ...config, streamMode: "updates" })) {
-      path.push(...Object.keys(update));
+      for (const node of Object.keys(update)) {
+        path.push(node);
+        onNode?.(node);
+      }
     }
     const state = (await this.graph.getState(config)).values as {
       result: Omit<ChatResponse, "session_id" | "turn" | "graph_path"> | null;

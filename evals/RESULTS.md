@@ -1,6 +1,6 @@
 # Eval results
 
-- Run at: 2026-10-02T02:18:03.536Z
+- Run at: 2026-10-02T02:59:03.162Z
 - Mode: deterministic (no LLM key: keyword extractor + template composer)
 - Summary: **16 passed, 1 failed, 0 inconclusive (of 17)**
 

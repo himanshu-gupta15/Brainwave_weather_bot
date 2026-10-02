@@ -16,7 +16,7 @@ import { type Match, matchSops, select } from "@/lib/sop/engine";
 import { computeMetrics, METRICS, type Metrics, type MetricName, resolveWindow } from "@/lib/sop/metrics";
 import type { PolicyStore, Sop, Taxonomy } from "@/lib/sop/schema";
 import { type Location, type WeatherClient, WeatherDataError } from "@/lib/weather/openMeteo";
-import type { ChatStatus, SopRef, WeatherValue } from "@/types/api";
+import type { ChatStatus, HourlyPoint, SopRef, WeatherValue } from "@/types/api";
 
 export const UNRECOGNISED_ACTIVITY = "the activity you asked about";
 
@@ -46,6 +46,24 @@ function weatherValues(metrics: Metrics | null): WeatherValue[] {
     const v = metrics[k];
     return v === null ? [] : [{ metric: k, label: METRICS[k].label, value: v, unit: METRICS[k].unit }];
   });
+}
+
+/** Raw API values for each hour of the window, for the UI chart. */
+function hourlyPoints(state: GraphState): HourlyPoint[] | null {
+  const f = state.forecast;
+  const w = state.window;
+  if (!f || !w) return null;
+  const points: HourlyPoint[] = [];
+  for (let i = w.startIndex; i < w.endIndex; i++) {
+    points.push({
+      time: f.hourlyTimes[i],
+      temp_c: f.hourly.temperature_2m[i],
+      feels_like_c: f.hourly.apparent_temperature[i],
+      precip_prob_pct: f.hourly.precipitation_probability[i],
+      precip_mm: f.hourly.precipitation[i],
+    });
+  }
+  return points;
 }
 
 function sopRef(sop: Sop): SopRef {
@@ -254,6 +272,7 @@ export class Nodes {
       };
     }
     const weather = weatherValues(state.metrics);
+    const hourly = hourlyPoints(state);
     const result: TurnResult = {
       status,
       answer,
@@ -266,6 +285,7 @@ export class Nodes {
       location: state.location,
       window: window ? { label: window.label, day: window.day, part: window.part, start: window.start, end: window.end } : null,
       weather: weather.length ? weather : null,
+      hourly,
       intent: {
         location_query: nextCtx.locationQuery,
         activities: nextCtx.activities,

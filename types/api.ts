@@ -50,6 +50,15 @@ export interface WindowInfo {
   end: string;
 }
 
+/** One forecast hour inside the answer's window, exactly as Open-Meteo returned it. */
+export interface HourlyPoint {
+  time: string; // local ISO hour
+  temp_c: number | null;
+  feels_like_c: number | null;
+  precip_prob_pct: number | null;
+  precip_mm: number | null;
+}
+
 export interface IntentInfo {
   location_query: string | null;
   activities: string[];
@@ -75,6 +84,8 @@ export interface ChatResponse {
   evidence: EvidenceItem[];
   /** Window metrics computed from the Open-Meteo response for this request. */
   weather: WeatherValue[] | null;
+  /** Raw hourly values for the window (chart data); null when no forecast was fetched. */
+  hourly: HourlyPoint[] | null;
   location: LocationInfo | null;
   window: WindowInfo | null;
   intent: IntentInfo;
@@ -86,3 +97,13 @@ export interface ChatResponse {
 export interface ErrorResponse {
   error: string;
 }
+
+/**
+ * NDJSON events from POST /api/chat when the request sends
+ * `Accept: application/x-ndjson`: one "node" event per LangGraph node as it
+ * completes, then exactly one "result" or "error".
+ */
+export type ChatStreamEvent =
+  | { type: "node"; node: string }
+  | { type: "result"; response: ChatResponse }
+  | { type: "error"; error: string; status: number };
