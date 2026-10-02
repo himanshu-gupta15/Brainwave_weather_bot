@@ -42,11 +42,16 @@ const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `s-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 /** Reads POST /api/chat as NDJSON so the loading strip reflects real graph progress. */
-async function streamChat(sessionId: string, message: string, onNode: (node: string) => void): Promise<ChatResponse> {
+async function streamChat(
+  sessionId: string,
+  message: string,
+  sessionState: unknown,
+  onNode: (node: string) => void,
+): Promise<ChatResponse> {
   const resp = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" },
-    body: JSON.stringify({ session_id: sessionId, message }),
+    body: JSON.stringify({ session_id: sessionId, message, session_state: sessionState }),
   });
   if (!resp.ok || !resp.body) {
     const body: unknown = await resp.json().catch(() => null);
@@ -127,7 +132,9 @@ export function Console() {
     setLoading({ sessionId, done: [] });
     let turn: Turn;
     try {
-      const res = await streamChat(sessionId, message, (node) =>
+      // Echo the last server-issued state so a cold serverless instance can resume this session.
+      const lastAnswer = active?.turns.findLast((t): t is Extract<Turn, { role: "assistant" }> => t.role === "assistant");
+      const res = await streamChat(sessionId, message, lastAnswer?.res.session_state, (node) =>
         setLoading((l) => (l && l.sessionId === sessionId ? { ...l, done: [...l.done, node] } : l)),
       );
       turn = { id: nextTurnId.current++, role: "assistant", res };

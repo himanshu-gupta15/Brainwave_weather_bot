@@ -5,6 +5,11 @@ export type ChatStatus = "answered" | "no_guidance" | "data_unavailable" | "need
 export interface ChatRequest {
   session_id: string;
   message: string;
+  /**
+   * The `session_state` from the previous response, echoed back. Used only if
+   * the server has no memory of this session (e.g. a serverless cold start).
+   */
+  session_state?: unknown;
 }
 
 export interface SopRef {
@@ -92,6 +97,10 @@ export interface ChatResponse {
   /** "template", "llm", or "template (llm reply rejected: ...)". */
   composer: string;
   graph_path: string[];
+  /** Opaque, server-validated session state for the client to send back next turn. */
+  session_state: unknown;
+  /** True when this turn resumed from `session_state` instead of server memory. */
+  resumed: boolean;
 }
 
 export interface ErrorResponse {

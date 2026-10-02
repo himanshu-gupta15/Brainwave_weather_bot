@@ -5,8 +5,8 @@ import { type Composer, LLMComposer, TemplateComposer } from "@/lib/compose/comp
 import { loadSettings, type Settings } from "@/lib/config";
 import { buildGraph, type WeatherGraph } from "@/lib/graph/builder";
 import type { GraphDeps } from "@/lib/graph/nodes";
-import { type DecisionLogEntry, turnInput } from "@/lib/graph/state";
-import type { IntentExtractor } from "@/lib/intent/intent";
+import { type DecisionLogEntry, type TurnResult, turnInput } from "@/lib/graph/state";
+import { type IntentExtractor, restoreContext, type SessionContext } from "@/lib/intent/intent";
 import { KeywordIntentExtractor } from "@/lib/intent/keywordExtractor";
 import { LLMIntentExtractor } from "@/lib/intent/llmExtractor";
 import { PolicyStore } from "@/lib/sop/schema";
@@ -45,21 +45,48 @@ export class ChatService {
    * One turn. The session id is the LangGraph thread id, so the checkpointer
    * restores earlier turns. `onNode` is called as each graph node completes.
    */
-  async chat(sessionId: string, message: string, onNode?: (node: string) => void): Promise<ChatResponse> {
+  async chat(
+    sessionId: string,
+    message: string,
+    onNode?: (node: string) => void,
+    sessionState?: unknown,
+  ): Promise<ChatResponse> {
     const config = { configurable: { thread_id: sessionId } };
+    const input = turnInput(message);
+    // Server memory (the LangGraph checkpointer) is the source of truth. Only
+    // when it has never seen this session do we fall back to the validated
+    // state the client echoed back, so follow-ups survive a cold start.
+    let resumed = false;
+    const known = ((await this.graph.getState(config)).values as { decisionLog?: unknown[] }).decisionLog?.length;
+    if (!known && sessionState !== undefined) {
+      const { policies, taxonomy } = this.deps.policies.get();
+      const restored = restoreContext(sessionState, taxonomy, new Set(policies.sops.map((p) => p.id)));
+      if (restored) {
+        input.context = restored;
+        resumed = true;
+      }
+    }
     const path: string[] = [];
-    for await (const update of await this.graph.stream(turnInput(message), { ...config, streamMode: "updates" })) {
+    for await (const update of await this.graph.stream(input, { ...config, streamMode: "updates" })) {
       for (const node of Object.keys(update)) {
         path.push(node);
         onNode?.(node);
       }
     }
     const state = (await this.graph.getState(config)).values as {
-      result: Omit<ChatResponse, "session_id" | "turn" | "graph_path"> | null;
+      result: TurnResult | null;
       decisionLog: DecisionLogEntry[];
+      context: SessionContext;
     };
     if (!state.result) throw new Error("graph finished without a result");
-    return { session_id: sessionId, turn: state.decisionLog.length, ...state.result, graph_path: path };
+    return {
+      session_id: sessionId,
+      turn: state.decisionLog.length,
+      ...state.result,
+      graph_path: path,
+      session_state: { ...state.context, resolvedLocation: null } satisfies SessionContext, // coordinates never round-trip
+      resumed,
+    };
   }
 
   async history(sessionId: string): Promise<DecisionLogEntry[]> {

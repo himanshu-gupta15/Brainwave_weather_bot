@@ -102,3 +102,46 @@ export function merge(prev: SessionContext, intent: Intent): SessionContext {
     lastDecision: prev.lastDecision,
   };
 }
+
+const shortText = z.string().max(100);
+const ResumeStateSchema = z.object({
+  locationQuery: shortText.nullable(),
+  activities: z.array(shortText).max(20),
+  otherActivity: shortText.nullable(),
+  groups: z.array(shortText).max(20),
+  day: z.enum(["today", "tomorrow"]),
+  partOfDay: z.enum(["now", "morning", "afternoon", "evening", "night", "all_day"]),
+  lastDecision: z
+    .object({
+      windowLabel: shortText,
+      sopId: shortText.nullable(),
+      sopTitle: z.string().max(200).nullable(),
+      locationLabel: z.string().max(200).nullable(),
+    })
+    .nullable(),
+});
+
+/**
+ * Rebuild a session from the state the client echoes back, used only when this
+ * server instance has no checkpoint for the session (serverless cold start or a
+ * different instance). The client is untrusted, so: ids not in the taxonomy are
+ * dropped, coordinates are never accepted (the place is re-geocoded), and an
+ * "earlier decision" is kept only if it cites an SOP that actually exists.
+ * Returns null when the payload is unusable.
+ */
+export function restoreContext(raw: unknown, taxonomy: Taxonomy, sopIds: Set<string>): SessionContext | null {
+  const parsed = ResumeStateSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const s = parsed.data;
+  const decision = s.lastDecision;
+  return {
+    locationQuery: s.locationQuery,
+    resolvedLocation: null,
+    activities: s.activities.filter((a) => a in taxonomy.activities),
+    otherActivity: s.otherActivity?.replace(/[^\p{L}\p{N} '-]/gu, "").trim().slice(0, 40) || null,
+    groups: s.groups.filter((g) => g in taxonomy.groups),
+    day: s.day,
+    partOfDay: s.partOfDay,
+    lastDecision: decision && (decision.sopId === null || sopIds.has(decision.sopId)) ? decision : null,
+  };
+}

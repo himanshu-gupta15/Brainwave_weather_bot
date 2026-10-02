@@ -27,7 +27,7 @@ export interface DecisionLogEntry {
   location: string | null;
 }
 
-export type TurnResult = Omit<ChatResponse, "session_id" | "turn" | "graph_path">;
+export type TurnResult = Omit<ChatResponse, "session_id" | "turn" | "graph_path" | "session_state" | "resumed">;
 
 /** Routes set by deciding nodes and read by the conditional edges. */
 export type Route =

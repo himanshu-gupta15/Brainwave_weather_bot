@@ -6,14 +6,14 @@ const MAX_MESSAGE_LENGTH = 2000;
 
 function parseRequest(body: unknown): ChatRequest | string {
   if (typeof body !== "object" || body === null) return "body must be a JSON object";
-  const { session_id, message } = body as Record<string, unknown>;
+  const { session_id, message, session_state } = body as Record<string, unknown>;
   if (typeof session_id !== "string" || !session_id.trim() || session_id.length > 100) {
     return "session_id must be a non-empty string (max 100 chars)";
   }
   if (typeof message !== "string" || !message.trim() || message.length > MAX_MESSAGE_LENGTH) {
     return `message must be a non-empty string (max ${MAX_MESSAGE_LENGTH} chars)`;
   }
-  return { session_id, message: message.trim() };
+  return { session_id, message: message.trim(), session_state };
 }
 
 /** Maps a failure to an HTTP status and a user-safe message. */
@@ -49,7 +49,7 @@ export async function POST(request: Request): Promise<Response> {
         const send = (event: ChatStreamEvent) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
         try {
           const service = await getChatService();
-          const response = await service.chat(req.session_id, req.message, (node) => send({ type: "node", node }));
+          const response = await service.chat(req.session_id, req.message, (node) => send({ type: "node", node }), req.session_state);
           send({ type: "result", response });
         } catch (err) {
           send({ type: "error", ...describeError(err) });
@@ -63,7 +63,7 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const service = await getChatService();
-    const result: ChatResponse = await service.chat(req.session_id, req.message);
+    const result: ChatResponse = await service.chat(req.session_id, req.message, undefined, req.session_state);
     return Response.json(result);
   } catch (err) {
     const { status, error } = describeError(err);

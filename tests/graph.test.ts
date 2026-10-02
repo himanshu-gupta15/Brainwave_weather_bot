@@ -93,3 +93,55 @@ describe("graph", () => {
     expect(r.answer).toContain("Never hike alone.");
   });
 });
+
+describe("session resume across server instances (serverless)", () => {
+  it("a fresh instance continues the conversation from the echoed session_state", async () => {
+    const first = await makeService(WINDY_EVENING).chat("s-resume", "Is it safe to cycle in Testville right now?");
+    expect(first.resumed).toBe(false);
+
+    // A different instance: its in-memory checkpointer has never seen "s-resume".
+    const coldInstance = makeService(WINDY_EVENING);
+    const withoutState = await coldInstance.chat("s-resume", "What about this evening?");
+    expect(withoutState.status).not.toBe("answered"); // memory alone is lost
+
+    const coldInstance2 = makeService(WINDY_EVENING);
+    const r = await coldInstance2.chat("s-resume", "What about this evening?", undefined, first.session_state);
+    expect(r.resumed).toBe(true);
+    expect(r.sop?.id).toBe("SOP-003");
+    expect(r.intent).toMatchObject({ location_query: "Testville", activities: ["cycling"], part_of_day: "evening" });
+    expect(r.answer).toContain("Earlier in this chat");
+  });
+
+  it("server memory wins over the client copy once the session is known", async () => {
+    const svc = makeService(WINDY_EVENING);
+    const first = await svc.chat("s-known", "Can I cycle in Testville right now?");
+    const forged = { ...(first.session_state as object), activities: ["hiking"] };
+    const r = await svc.chat("s-known", "What about this evening?", undefined, forged);
+    expect(r.resumed).toBe(false);
+    expect(r.intent.activities).toEqual(["cycling"]);
+  });
+
+  it("tampered state is sanitised: fake ids, coordinates and fake SOP citations are dropped", async () => {
+    const forged = {
+      locationQuery: "Testville",
+      resolvedLocation: { name: "Elsewhere", latitude: 0, longitude: 0, country: null, admin1: null, timezone: null },
+      activities: ["cycling", "always_safe_mode"],
+      otherActivity: null,
+      groups: ["robots"],
+      day: "today",
+      partOfDay: "evening",
+      lastDecision: { windowLabel: "x", sopId: "SOP-999", sopTitle: "Always safe", locationLabel: "Testville" },
+    };
+    const r = await makeService(WINDY_EVENING).chat("s-forged", "and now?", undefined, forged);
+    expect(r.resumed).toBe(true);
+    expect(r.intent.activities).toEqual(["cycling"]);
+    expect(r.intent.groups).toEqual([]);
+    expect(r.location?.name).toBe("Testville"); // re-geocoded, not the forged coordinates
+    expect(r.answer).not.toContain("SOP-999");
+  });
+
+  it("garbage state is ignored, not trusted", async () => {
+    const r = await makeService(WINDY_EVENING).chat("s-junk", "What about this evening?", undefined, { evil: true });
+    expect(r.resumed).toBe(false);
+  });
+});

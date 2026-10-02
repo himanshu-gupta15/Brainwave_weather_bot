@@ -49,6 +49,17 @@ The frontend and backend are the same Next.js app: `npm run dev` serves both the
 | `npm run validate-sops` | Validate `data/sops.yaml` and list rules, without starting the app |
 | `npm run typecheck` / `npm run lint` | `tsc --noEmit` / ESLint |
 
+### Deploying to Vercel
+
+No configuration is needed: it's a standard Next.js app, and `next.config.ts` ships `data/*.yaml` with the API routes.
+
+```bash
+npx vercel login
+npx vercel --prod
+```
+
+Optionally add `LLM_PROVIDER`, `LLM_MODEL` and `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` under Project → Settings → Environment Variables, then redeploy. Without them the deployment runs in deterministic keyword/template mode. Editing `data/sops.yaml` on Vercel means commit and redeploy, because the deployed filesystem is read-only. Live hot-reload of SOPs only applies when running locally or on a server you control.
+
 ### Environment variables (`.env.local`, git-ignored)
 
 | Variable | Default | Purpose |
@@ -277,6 +288,7 @@ The last branch came from evidence, not intuition. I pulled Open-Meteo's **archi
 - The UI generates the id with `crypto.randomUUID()` on the first message and keeps it only in memory, so a reload or **New chat** starts a fresh session. Memory is not shared across sessions and does not survive a server restart (as the brief allows).
 - What is carried: the transcript, plus a **structured context** (location query, cached geocode, activities, groups, time window, last decision). `merge()` in `lib/intent/intent.ts` applies explicit rules: a new activity starts a new topic; otherwise activity, place and time are inherited. "What about this evening?" keeps Bhopal and cycling and changes the window; "and with my kids?" adds children and keeps the rest.
 - Not contradicting earlier answers: the previous decision (window and SOP) is passed to the composer. When the new answer differs, the reply says so: *"(Earlier in this chat, for the rest of today, the applicable policy was SOP-007 …)"*.
+- **Serverless resume.** On Vercel the in-memory checkpointer can disappear between messages (idle instances are recycled, and requests can hit different instances). Each response therefore also carries `session_state` (the structured context above, without coordinates), and the UI echoes it back with the next message. The server uses it **only when it has no memory of the session**. Server memory always wins otherwise. It is treated as untrusted input: ids outside the taxonomy are dropped, the place is re-geocoded rather than trusting coordinates, and an "earlier decision" is kept only if it cites a real SOP (tests in `tests/graph.test.ts`). The response's `resumed` flag shows when this happened.
 
 ## Failure handling
 
@@ -383,7 +395,7 @@ E06 depends on the day's weather: it scans 28 cities and reports **INCONCLUSIVE*
 - **The guard checks facts, not tone.** It enforces numbers and SOP ids. It cannot detect an LLM softening "postpone" into "should be fine". Mitigations: the advice text is passed verbatim with strict instructions, the composer never sees user text, and the structured `sop` field is always authoritative. A stricter option is template-only replies (no key).
 - **Gray zones produce "no guidance".** This is by design, but a sparse rule set means more "I don't know" answers.
 - **Geocoding picks the first result silently** (as the brief suggests). The resolved place is displayed, but the bot doesn't ask "did you mean …".
-- **Memory is per-process `MemorySaver`.** It grows without bound, isn't shared across server instances, and is lost on restart. Fine for this brief; production would use a persistent checkpointer with TTLs.
+- **Memory is per-process `MemorySaver`.** It grows without bound and isn't shared across server instances. The client-echoed `session_state` covers continuity of the *structured* context on serverless, but the full transcript and decision log (`/api/sessions/{id}/decisions`) live only on the instance that handled the turn. Production would use a persistent checkpointer (e.g. Redis/Postgres) with TTLs.
 - New kinds of weather data need a small code change in `metrics.ts` (see above).
 - **UI on phones:** below 640px the nav links (Policies, Evaluations, API) are hidden and the sessions/policy rail only appears from 1040px, so on a phone you get the chat and the inspector only. The "Evaluations" link opens `evals/RESULTS.md` on GitHub rather than an in-app page.
 
